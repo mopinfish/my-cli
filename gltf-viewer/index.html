@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>GLTF Viewer - Rust + WebAssembly</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background-color: #2c2c2c;
+            color: white;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #ff6b35;
+        }
+        
+        .controls {
+            margin-bottom: 20px;
+            padding: 15px;
+            background-color: #3c3c3c;
+            border-radius: 8px;
+        }
+        
+        .file-input {
+            margin-right: 10px;
+            padding: 8px;
+        }
+        
+        button {
+            padding: 10px 20px;
+            background-color: #ff6b35;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        
+        button:hover {
+            background-color: #e55a2b;
+        }
+        
+        #canvas {
+            border: 2px solid #444;
+            border-radius: 8px;
+            display: block;
+            margin: 20px auto;
+            background-color: #1a1a1a;
+        }
+        
+        .info {
+            text-align: center;
+            margin-top: 20px;
+            color: #ccc;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            color: #ff6b35;
+            font-size: 18px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎮 GLTF 3D Model Viewer</h1>
+        
+        <div class="controls">
+            <input type="file" id="fileInput" class="file-input" accept=".gltf,.glb">
+            <button onclick="loadFile()">Load GLTF File</button>
+            <button onclick="createTestBox()">Create Test Box</button>
+            <button onclick="resetCamera()">Reset Camera</button>
+        </div>
+        
+        <div class="loading" id="loading">Loading model...</div>
+        
+        <canvas id="canvas" width="800" height="600"></canvas>
+        
+        <div class="info">
+            <p>📁 Select a GLTF/GLB file to load, or click "Create Test Box" to see a sample</p>
+            <p>🖱️ Click and drag to rotate the camera around the model</p>
+            <p>⚡ Powered by Rust + WebAssembly + three-d</p>
+        </div>
+    </div>
+
+    <script type="module">
+        import init, { GltfViewer } from './pkg/gltf_viewer.js';
+        
+        let viewer = null;
+        let isMouseDown = false;
+        let lastMouseX = 0;
+        let lastMouseY = 0;
+        
+        async function run() {
+            // WebAssemblyを初期化
+            await init();
+            
+            try {
+                // ビューアを作成
+                viewer = new GltfViewer("canvas");
+                console.log("Viewer created successfully");
+                
+                // キャンバスのイベントリスナーを設定
+                const canvas = document.getElementById('canvas');
+                
+                canvas.addEventListener('mousedown', (e) => {
+                    isMouseDown = true;
+                    lastMouseX = e.clientX;
+                    lastMouseY = e.clientY;
+                    canvas.style.cursor = 'grabbing';
+                });
+                
+                canvas.addEventListener('mouseup', () => {
+                    isMouseDown = false;
+                    canvas.style.cursor = 'grab';
+                });
+                
+                canvas.addEventListener('mousemove', (e) => {
+                    if (isMouseDown && viewer) {
+                        const deltaX = e.clientX - lastMouseX;
+                        const deltaY = e.clientY - lastMouseY;
+                        
+                        viewer.rotate_camera(deltaX, deltaY);
+                        lastMouseX = e.clientX;
+                        lastMouseY = e.clientY;
+                    }
+                });
+                
+                canvas.style.cursor = 'grab';
+                
+                // ウィンドウリサイズ対応
+                window.addEventListener('resize', () => {
+                    const canvas = document.getElementById('canvas');
+                    viewer.resize(canvas.width, canvas.height);
+                });
+                
+                // レンダリングループを開始
+                renderLoop();
+                
+            } catch (error) {
+                console.error("Failed to create viewer:", error);
+                alert("Failed to initialize 3D viewer. Please check your browser supports WebGL.");
+            }
+        }
+        
+        function renderLoop() {
+            if (viewer) {
+                viewer.render();
+            }
+            requestAnimationFrame(renderLoop);
+        }
+        
+        // ファイル読み込み
+        window.loadFile = async function() {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                alert('Please select a GLTF file first.');
+                return;
+            }
+            
+            const loading = document.getElementById('loading');
+            loading.style.display = 'block';
+            
+            console.log(`Loading file: ${file.name}, size: ${file.size} bytes, type: ${file.type}`);
+            
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                const uint8Array = new Uint8Array(arrayBuffer);
+                
+                console.log(`File loaded as ArrayBuffer, size: ${uint8Array.length} bytes`);
+                console.log(`First 10 bytes: ${Array.from(uint8Array.slice(0, 10)).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' ')}`);
+                
+                // GLB vs GLTF detection
+                const isGLB = uint8Array.length >= 4 && 
+                              uint8Array[0] === 0x67 && uint8Array[1] === 0x6C && 
+                              uint8Array[2] === 0x54 && uint8Array[3] === 0x46; // "glTF"
+                
+                console.log(`File type detected: ${isGLB ? 'GLB (binary)' : 'GLTF (JSON)'}`);
+                
+                await viewer.load_gltf(uint8Array);
+                console.log('GLTF file loaded successfully');
+                
+            } catch (error) {
+                console.error('Detailed error information:', error);
+                
+                // エラーの詳細を表示
+                let errorMsg = 'Failed to load GLTF file.\n\n';
+                errorMsg += `File: ${file.name}\n`;
+                errorMsg += `Size: ${file.size} bytes\n`;
+                errorMsg += `Type: ${file.type}\n\n`;
+                errorMsg += `Error: ${error.message || error}\n\n`;
+                errorMsg += 'Common issues:\n';
+                errorMsg += '• File might be corrupted\n';
+                errorMsg += '• Unsupported GLTF version\n';
+                errorMsg += '• Missing required data\n';
+                errorMsg += '• Try a different GLTF file\n\n';
+                errorMsg += 'Check browser console for detailed logs.';
+                
+                alert(errorMsg);
+            } finally {
+                loading.style.display = 'none';
+            }
+        };
+        
+        // テストボックス作成
+        window.createTestBox = function() {
+            if (viewer) {
+                viewer.create_test_box();
+                console.log('Test box created');
+            }
+        };
+        
+        // カメラリセット
+        window.resetCamera = function() {
+            if (viewer) {
+                // 新しいビューアを作成してカメラをリセット
+                viewer = new GltfViewer("canvas");
+                console.log('Camera reset');
+            }
+        };
+        
+        // 初期化実行
+        run();
+    </script>
+</body>
+</html>
